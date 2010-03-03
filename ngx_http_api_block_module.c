@@ -7,6 +7,7 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 #include <string.h>
+#include <stdlib.h>
 #include <libmemcached/memcached.h>
 
 typedef struct {
@@ -67,6 +68,7 @@ static ngx_int_t ngx_http_api_block_handler(ngx_http_request_t *r) {
 		char *remote_addr_val, *value, *servername, *result;
     size_t size, remote_addr_len, len;
 		uint32_t flags;
+		int i;
 
 		remote_addr_val = (char *)r->connection->addr_text.data;
 		remote_addr_len = sizeof(remote_addr_val) + 1;
@@ -84,12 +86,16 @@ static ngx_int_t ngx_http_api_block_handler(ngx_http_request_t *r) {
 		result = memcached_get(ab_memcache, remote_addr_val, remote_addr_len, &len,
 				&flags, &mc_error);
 		if (result) {
-			value = "HIT";
+			i = atoi(result) << 1;
+			value = (char *)malloc(sizeof(char) * 16);
+			sprintf(value, "%d", i);
+		  rc_m = memcached_set(ab_memcache, remote_addr_val, remote_addr_len, 
+					value, sizeof(value), (time_t)i, (uint32_t)0);
 		}
 		else {
 			value = "MISS";
 		  rc_m = memcached_set(ab_memcache, remote_addr_val, remote_addr_len, 
-					"1", sizeof("1\n\0"), (time_t)0, (uint32_t)0);
+					"1", sizeof("1"), (time_t)1, (uint32_t)0);
 		}
 		size = sizeof(value) + sizeof("\n\0");
 
