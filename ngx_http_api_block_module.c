@@ -6,7 +6,8 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
-#include <memcached.h>
+#include <string.h>
+#include <libmemcached/memcached.h>
 
 typedef struct {
     ngx_uint_t  methods;
@@ -64,13 +65,29 @@ static ngx_int_t ngx_http_api_block_handler(ngx_http_request_t *r) {
     ngx_int_t          rc;
     ngx_buf_t         *b;
     ngx_chain_t        out;
+		char							*remote_addr_val;
+		size_t						 remote_addr_len;
 
-		memcached_return_t rc;
+		memcached_return_t rc_m;
 		memcached_server_st *servers;
 		memcached_st *memc = memcached_create(NULL);
-		char servername[] = "localhost";
+		char servername[] = "127.0.0.1";
 
-		servers = memcached_server_list_append(NULL, servername, 400, &rc);
+		remote_addr_val = (char *)r->connection->addr_text.data;
+		remote_addr_len = sizeof(remote_addr_val) + 1;
+
+		servers = memcached_server_list_append(NULL, servername, 11211, &rc_m);
+
+		memcached_server_push(memc, servers);
+
+		char *value = "test";
+		size_t value_length = strlen(value);
+
+		rc_m = memcached_set(memc, remote_addr_val, remote_addr_len, value, value_length,
+				(time_t)0, (uint32_t)0);
+
+		memcached_server_free(servers);
+		memcached_free(memc);
 
     rc = ngx_http_discard_request_body(r);
 
