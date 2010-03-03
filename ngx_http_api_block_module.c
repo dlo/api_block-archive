@@ -61,33 +61,41 @@ ngx_module_t  ngx_http_api_block_module = {
 };
 
 static ngx_int_t ngx_http_api_block_handler(ngx_http_request_t *r) {
-    size_t             size;
-    ngx_int_t          rc;
-    ngx_buf_t         *b;
-    ngx_chain_t        out;
-		char							*remote_addr_val;
-		size_t						 remote_addr_len;
-
-		memcached_return_t rc_m;
-		memcached_server_st *servers;
-		memcached_st *memc = memcached_create(NULL);
-		char servername[] = "127.0.0.1";
+    ngx_int_t rc;
+    ngx_buf_t *b;
+    ngx_chain_t out;
+		char *remote_addr_val, *value, *servername, *result;
+    size_t size, remote_addr_len, len;
+		uint32_t flags;
 
 		remote_addr_val = (char *)r->connection->addr_text.data;
 		remote_addr_len = sizeof(remote_addr_val) + 1;
 
+		// memcached_result_st rv;
+		memcached_return mc_error;
+		memcached_return_t rc_m;
+		memcached_server_st *servers;
+		memcached_st *ab_memcache = memcached_create(NULL);
+		servername = "127.0.0.1";
+
 		servers = memcached_server_list_append(NULL, servername, 11211, &rc_m);
+		memcached_server_push(ab_memcache, servers);
 
-		memcached_server_push(memc, servers);
+		result = memcached_get(ab_memcache, remote_addr_val, remote_addr_len, &len,
+				&flags, &mc_error);
+		if (result) {
+			value = "HIT";
+		}
+		else {
+			value = "MISS";
+		  rc_m = memcached_set(ab_memcache, remote_addr_val, remote_addr_len, 
+					"1", sizeof("1\n\0"), (time_t)0, (uint32_t)0);
+		}
+		size = sizeof(value) + sizeof("\n\0");
 
-		char *value = "test";
-		size_t value_length = strlen(value);
-
-		rc_m = memcached_set(memc, remote_addr_val, remote_addr_len, value, value_length,
-				(time_t)0, (uint32_t)0);
 
 		memcached_server_free(servers);
-		memcached_free(memc);
+		memcached_free(ab_memcache);
 
     rc = ngx_http_discard_request_body(r);
 
@@ -108,14 +116,15 @@ static ngx_int_t ngx_http_api_block_handler(ngx_http_request_t *r) {
         }
     }
 
-		size = sizeof(r->connection->addr_text.data) + sizeof("\n\0");
+		// size = sizeof(r->connection->addr_text.data) + sizeof("\n\0");
 
     b = ngx_create_temp_buf(r->pool, size);
     if (b == NULL) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
-		b->last = ngx_sprintf(b->last, "%s\n", r->connection->addr_text.data);
+		// b->last = ngx_sprintf(b->last, "%s\n", r->connection->addr_text.data);
+		b->last = ngx_sprintf(b->last, "%s\n", value);
 
     out.buf = b;
     out.next = NULL;
