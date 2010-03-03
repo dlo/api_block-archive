@@ -1,6 +1,6 @@
 
 /*
- * Copyright (C) Igor Sysoev
+ * Copyright (C) Dan Loewenherz
  */
 
 #include <ngx_config.h>
@@ -83,21 +83,22 @@ static ngx_int_t ngx_http_api_block_handler(ngx_http_request_t *r) {
         }
     }
 
-		size = sizeof(r->headers_in.user_agent->value) + 1;
+		size = sizeof(r->connection->addr_text.data) + sizeof("\n\0");
 
     b = ngx_create_temp_buf(r->pool, size);
     if (b == NULL) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
+		b->last = ngx_sprintf(b->last, "%s\n", r->connection->addr_text.data);
+
     out.buf = b;
     out.next = NULL;
-
-		b->last = ngx_sprintf(b->last, "%s\n", r->headers_in.user_agent->value);
 
     r->headers_out.status = NGX_HTTP_OK;
     r->headers_out.content_length_n = b->last - b->pos;
 
+		b->memory = 1;
     b->last_buf = 1;
 
     rc = ngx_http_send_header(r);
@@ -118,3 +119,4 @@ static char *ngx_http_api_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
     return NGX_CONF_OK;
 }
+

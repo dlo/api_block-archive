@@ -1,5 +1,5 @@
 To Build
 ========
 
-./configure --add-module=<this directory>
+    ./configure --add-module=<this directory>
 
