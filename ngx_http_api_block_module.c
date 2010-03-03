@@ -6,6 +6,7 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
+#include <memcached.h>
 
 typedef struct {
     ngx_uint_t  methods;
@@ -63,6 +64,13 @@ static ngx_int_t ngx_http_api_block_handler(ngx_http_request_t *r) {
     ngx_int_t          rc;
     ngx_buf_t         *b;
     ngx_chain_t        out;
+
+		memcached_return_t rc;
+		memcached_server_st *servers;
+		memcached_st *memc = memcached_create(NULL);
+		char servername[] = "localhost";
+
+		servers = memcached_server_list_append(NULL, servername, 400, &rc);
 
     rc = ngx_http_discard_request_body(r);
 
