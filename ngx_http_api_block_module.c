@@ -10,22 +10,24 @@
 #include <stdlib.h>
 #include <libmemcached/memcached.h>
 
-typedef struct {
-    ngx_flag_t log;
-} ngx_http_api_block_loc_conf_t;
+#define NGX_HTTP_BLOCK_ON 1
+#define NGX_HTTP_BLOCK_OFF 0
 
 static ngx_int_t ngx_http_api_block_init(ngx_conf_t *cf);
-static ngx_int_t ngx_http_api_block_handler(ngx_http_request_t *r);
 static ngx_http_output_body_filter_pt ngx_http_next_body_filter;
 static char *ngx_http_api_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+
+typedef struct {
+		ngx_flag_t status;
+} ngx_http_api_block_loc_conf_t;
 
 static ngx_command_t ngx_http_api_block_commands[] = {
     {
 			ngx_string("api_block"),
       NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_FLAG,
-      ngx_conf_set_flag_slot,
+      ngx_http_api_block,
       NGX_HTTP_LOC_CONF_OFFSET,
-      offsetof(ngx_http_api_block_loc_conf_t, log),
+      0,
       NULL
 		},
 
@@ -70,6 +72,16 @@ ngx_http_api_block_body_filter(ngx_http_request_t *r, ngx_chain_link *in) {
     size_t size, remote_addr_len, len;
 		uint32_t flags;
 		int i;
+    ngx_http_api_block_conf_t  *conf;
+
+    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "block filter");
+
+    conf = ngx_http_get_module_loc_conf(r, ngx_http_image_filter_module);
+
+		// Check if the filter has been enabled
+		if (conf->status == NGX_HTTP_BLOCK_OFF) {
+        return ngx_http_next_body_filter(r, in);
+		}
 
 		remote_addr_val = (char *)r->connection->addr_text.data;
 		remote_addr_len = sizeof(remote_addr_val) + 1;
@@ -150,6 +162,21 @@ ngx_http_api_block_body_filter(ngx_http_request_t *r, ngx_chain_link *in) {
 
 static char *ngx_http_api_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
+    ngx_http_api_block_conf_t *abcf = conf;
+    ngx_str_t *value;
+
+    value = cf->args->elts;
+
+    i = 1;
+
+    if (cf->args->nelts == 2) {
+        if (ngx_strcmp(value[i].data, "off") == 0) {
+            abcf->status = NGX_HTTP_BLOCK_OFF;
+				}
+				else {
+            abcf->status = NGX_HTTP_BLOCK_ON;
+				}
+		}
     return NGX_CONF_OK;
 }
 
