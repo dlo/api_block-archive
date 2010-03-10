@@ -14,22 +14,18 @@ typedef struct {
     ngx_flag_t log;
 } ngx_http_api_block_loc_conf_t;
 
+static ngx_int_t ngx_http_api_block_init(ngx_conf_t *cf);
 static ngx_int_t ngx_http_api_block_handler(ngx_http_request_t *r);
+static ngx_http_output_body_filter_pt ngx_http_next_body_filter;
 static char *ngx_http_api_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
-
-static ngx_http_api_block_header_filter_pt ngx_http_next_body_filter;
 
 static ngx_command_t ngx_http_api_block_commands[] = {
     {
 			ngx_string("api_block"),
       NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_FLAG,
-			/* access this variable through 
-				rlcf = ngx_http_get_module_loc_conf(r, ngx_http_rewrite_module);
-				rlcf->log
-				*/
       ngx_conf_set_flag_slot,
       NGX_HTTP_LOC_CONF_OFFSET,
-      offsetof(ngx_http_rewrite_loc_conf_t, log),
+      offsetof(ngx_http_api_block_loc_conf_t, log),
       NULL
 		},
 
