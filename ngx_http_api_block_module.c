@@ -13,18 +13,22 @@
 #define NGX_HTTP_BLOCK_ON 1
 #define NGX_HTTP_BLOCK_OFF 0
 
+static void *ngx_http_api_block_create_conf(ngx_conf_t *cf);
+static char *ngx_http_api_block_merge_conf(ngx_conf_t *cf, void *parent,
+    void *child);
 static ngx_int_t ngx_http_api_block_init(ngx_conf_t *cf);
 static ngx_http_output_body_filter_pt ngx_http_next_body_filter;
+static ngx_http_output_header_filter_pt  ngx_http_next_header_filter;
 static char *ngx_http_api_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 
 typedef struct {
-		ngx_flag_t status;
-} ngx_http_api_block_loc_conf_t;
+		ngx_uint_t status;
+} ngx_http_api_block_conf_t;
 
 static ngx_command_t ngx_http_api_block_commands[] = {
     {
 			ngx_string("api_block"),
-      NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_FLAG,
+      NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_TAKE13,
       ngx_http_api_block,
       NGX_HTTP_LOC_CONF_OFFSET,
       0,
@@ -44,8 +48,8 @@ static ngx_http_module_t ngx_http_api_block_module_ctx = {
 	NULL,                                  /* create server configuration */
 	NULL,                                  /* merge server configuration */
 
-	NULL,                                  /* create location configuration */
-	NULL                                   /* merge location configuration */
+	ngx_http_api_block_create_conf,     /* create location configuration */
+	ngx_http_api_block_merge_conf       /* merge location configuration */
 };
 
 ngx_module_t  ngx_http_api_block_module = {
@@ -64,7 +68,12 @@ ngx_module_t  ngx_http_api_block_module = {
 };
 
 static ngx_int_t
-ngx_http_api_block_body_filter(ngx_http_request_t *r, ngx_chain_link *in) {
+ngx_http_api_block_header_filter(ngx_http_request_t *r) {
+	return ngx_http_next_header_filter(r);
+}
+
+static ngx_int_t
+ngx_http_api_block_body_filter(ngx_http_request_t *r, ngx_chain_t *in) {
     ngx_int_t rc;
     ngx_buf_t *b;
     ngx_chain_t out;
@@ -72,11 +81,11 @@ ngx_http_api_block_body_filter(ngx_http_request_t *r, ngx_chain_link *in) {
     size_t size, remote_addr_len, len;
 		uint32_t flags;
 		int i;
-    ngx_http_api_block_conf_t  *conf;
+    ngx_http_api_block_conf_t *conf;
 
-    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "block filter");
+    // ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "block filter");
 
-    conf = ngx_http_get_module_loc_conf(r, ngx_http_image_filter_module);
+    conf = ngx_http_get_module_loc_conf(r, ngx_http_api_block_module);
 
 		// Check if the filter has been enabled
 		if (conf->status == NGX_HTTP_BLOCK_OFF) {
@@ -86,7 +95,6 @@ ngx_http_api_block_body_filter(ngx_http_request_t *r, ngx_chain_link *in) {
 		remote_addr_val = (char *)r->connection->addr_text.data;
 		remote_addr_len = sizeof(remote_addr_val) + 1;
 
-		// memcached_result_st rv;
 		memcached_return mc_error;
 		memcached_return_t rc_m;
 		memcached_server_st *servers;
@@ -160,11 +168,13 @@ ngx_http_api_block_body_filter(ngx_http_request_t *r, ngx_chain_link *in) {
     return ngx_http_output_filter(r, &out);
 }
 
-static char *ngx_http_api_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+static char *
+ngx_http_api_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
     ngx_http_api_block_conf_t *abcf = conf;
-    ngx_str_t *value;
 
+    ngx_str_t                         *value;
+    ngx_uint_t                         i;
     value = cf->args->elts;
 
     i = 1;
@@ -174,14 +184,49 @@ static char *ngx_http_api_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
             abcf->status = NGX_HTTP_BLOCK_OFF;
 				}
 				else {
-            abcf->status = NGX_HTTP_BLOCK_ON;
+            abcf->status = NGX_HTTP_BLOCK_OFF;
 				}
 		}
+
+		return NGX_CONF_OK;
+}
+
+static void *
+ngx_http_api_block_create_conf(ngx_conf_t *cf)
+{
+    ngx_http_api_block_conf_t *conf;
+
+    conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_api_block_conf_t));
+    if (conf == NULL) {
+        return NULL;
+    }
+
+    conf->status = NGX_CONF_UNSET_UINT;
+
+    return conf;
+}
+
+static char *
+ngx_http_api_block_merge_conf(ngx_conf_t *cf, void *parent, void *child)
+{
+    ngx_http_api_block_conf_t *prev = parent;
+    ngx_http_api_block_conf_t *conf = child;
+
+    if (conf->status == NGX_CONF_UNSET_UINT) {
+				conf->status = (prev->status == NGX_CONF_UNSET_UINT) ? 
+						NGX_HTTP_BLOCK_OFF : NGX_HTTP_BLOCK_ON;
+    }
+
+    ngx_conf_merge_uint_value(conf->status, prev->status, NGX_HTTP_BLOCK_OFF);
+
     return NGX_CONF_OK;
 }
 
 static ngx_int_t
 ngx_http_api_block_init(ngx_conf_t *cf) {
+    ngx_http_next_header_filter = ngx_http_top_header_filter;
+    ngx_http_top_header_filter = ngx_http_api_block_header_filter;
+
 		ngx_http_next_body_filter = ngx_http_top_body_filter;
 		ngx_http_top_body_filter = ngx_http_api_block_body_filter;
 
