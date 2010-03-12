@@ -18,20 +18,19 @@ static char *ngx_http_api_block_merge_conf(ngx_conf_t *cf, void *parent,
     void *child);
 static ngx_int_t ngx_http_api_block_init(ngx_conf_t *cf);
 static ngx_http_output_body_filter_pt ngx_http_next_body_filter;
-static ngx_http_output_header_filter_pt  ngx_http_next_header_filter;
-static char *ngx_http_api_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+static ngx_http_output_header_filter_pt ngx_http_next_header_filter;
 
 typedef struct {
-		ngx_uint_t status;
+		ngx_flag_t enabled;
 } ngx_http_api_block_conf_t;
 
 static ngx_command_t ngx_http_api_block_commands[] = {
     {
 			ngx_string("api_block"),
-      NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_TAKE13,
-      ngx_http_api_block,
+      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_FLAG,
+      ngx_conf_set_flag_slot,
       NGX_HTTP_LOC_CONF_OFFSET,
-      0,
+      offsetof(ngx_http_api_block_conf_t, enabled),
       NULL
 		},
 
@@ -74,22 +73,49 @@ ngx_http_api_block_header_filter(ngx_http_request_t *r) {
 
 static ngx_int_t
 ngx_http_api_block_body_filter(ngx_http_request_t *r, ngx_chain_t *in) {
-    ngx_int_t rc;
-    ngx_buf_t *b;
-    ngx_chain_t out;
+	ngx_chain_t *chain_link;
+	int chain_contains_last_buffer = 0;
+	for ( chain_link = in; chain_link != NULL; chain_link = chain_link->next ) {
+		if (chain_link->buf->last_buf)
+			chain_contains_last_buffer = 1;
+	}
+
+	if (!chain_contains_last_buffer) {
+		return ngx_http_next_body_filter(r, in);
+	}
+
+	ngx_buf_t *b;
+	b = ngx_calloc_buf(r->pool);
+	if (b == NULL) {
+		return NGX_ERROR;
+	}
+
+	b->pos = (u_char *) "<!-- served -->";
+	b->last = b->pos + sizeof("<!-- served -->") - 1;
+
+	ngx_chain_t added_link;
+	added_link.buf = b;
+	added_link.next = NULL;
+
+	chain_link->next = added_link;
+	chain_link->buf->last_buf = 0;
+	added_link->buf->last_buf = 1;
+
+	return ngx_http_next_body_filter(r, in);
+
 		char *remote_addr_val, *value, *servername, *result;
-    size_t size, remote_addr_len, len;
+		size_t remote_addr_len, len;
 		uint32_t flags;
 		int i;
-    ngx_http_api_block_conf_t *conf;
+		ngx_http_api_block_conf_t *conf;
 
-    // ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "block filter");
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "block filter");
 
     conf = ngx_http_get_module_loc_conf(r, ngx_http_api_block_module);
 
 		// Check if the filter has been enabled
-		if (conf->status == NGX_HTTP_BLOCK_OFF) {
-        return ngx_http_next_body_filter(r, in);
+		if (!conf->enabled == NGX_HTTP_BLOCK_ON) {
+			return ngx_http_next_body_filter(r, in);
 		}
 
 		remote_addr_val = (char *)r->connection->addr_text.data;
@@ -110,90 +136,23 @@ ngx_http_api_block_body_filter(ngx_http_request_t *r, ngx_chain_t *in) {
 			i = atoi(result) << 1;
 			value = (char *)malloc(sizeof(char) * 16);
 			sprintf(value, "%d", i);
-		  rc_m = memcached_set(ab_memcache, remote_addr_val, remote_addr_len, 
+			rc_m = memcached_set(ab_memcache, remote_addr_val, remote_addr_len, 
 					value, sizeof(value), (time_t)i, (uint32_t)0);
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+			return NGX_HTTP_INTERNAL_SERVER_ERROR;
 		}
 		else {
-			value = "MISS";
-		  rc_m = memcached_set(ab_memcache, remote_addr_val, remote_addr_len, 
+			rc_m = memcached_set(ab_memcache, remote_addr_val, remote_addr_len, 
 					"1", sizeof("1"), (time_t)1, (uint32_t)0);
 		}
-		size = sizeof(value) + sizeof("\n\0");
 
 		memcached_server_free(servers);
 		memcached_free(ab_memcache);
 
-    rc = ngx_http_discard_request_body(r);
-
-    if (rc != NGX_OK) {
-        return rc;
-    }
-
-    r->headers_out.content_type.len = sizeof("text/plain") - 1;
-    r->headers_out.content_type.data = (u_char *) "text/plain";
-
-    if (r->method == NGX_HTTP_HEAD) {
-        r->headers_out.status = NGX_HTTP_OK;
-
-        rc = ngx_http_send_header(r);
-
-        if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) {
-            return rc;
-        }
-    }
-
-    b = ngx_create_temp_buf(r->pool, size);
-    if (b == NULL) {
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    }
-
-		b->last = ngx_sprintf(b->last, "%s\n", value);
-
-    out.buf = b;
-    out.next = NULL;
-
-    r->headers_out.status = NGX_HTTP_OK;
-    r->headers_out.content_length_n = b->last - b->pos;
-
-		b->memory = 1;
-    b->last_buf = 1;
-
-    rc = ngx_http_send_header(r);
-
-    if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) {
-        return rc;
-    }
-
-    return ngx_http_output_filter(r, &out);
-}
-
-static char *
-ngx_http_api_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
-{
-    ngx_http_api_block_conf_t *abcf = conf;
-
-    ngx_str_t                         *value;
-    ngx_uint_t                         i;
-    value = cf->args->elts;
-
-    i = 1;
-
-    if (cf->args->nelts == 2) {
-        if (ngx_strcmp(value[i].data, "off") == 0) {
-            abcf->status = NGX_HTTP_BLOCK_OFF;
-				}
-				else {
-            abcf->status = NGX_HTTP_BLOCK_OFF;
-				}
-		}
-
-		return NGX_CONF_OK;
+		return ngx_http_next_body_filter(r, in);
 }
 
 static void *
-ngx_http_api_block_create_conf(ngx_conf_t *cf)
-{
+ngx_http_api_block_create_conf(ngx_conf_t *cf) {
     ngx_http_api_block_conf_t *conf;
 
     conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_api_block_conf_t));
@@ -201,8 +160,7 @@ ngx_http_api_block_create_conf(ngx_conf_t *cf)
         return NULL;
     }
 
-    conf->status = NGX_CONF_UNSET_UINT;
-
+    conf->enabled = NGX_CONF_UNSET;
     return conf;
 }
 
@@ -212,18 +170,19 @@ ngx_http_api_block_merge_conf(ngx_conf_t *cf, void *parent, void *child)
     ngx_http_api_block_conf_t *prev = parent;
     ngx_http_api_block_conf_t *conf = child;
 
-    if (conf->status == NGX_CONF_UNSET_UINT) {
-				conf->status = (prev->status == NGX_CONF_UNSET_UINT) ? 
-						NGX_HTTP_BLOCK_OFF : NGX_HTTP_BLOCK_ON;
+    if (conf->enabled == NGX_CONF_UNSET) {
+			conf->enabled = NGX_HTTP_BLOCK_OFF;
     }
 
-    ngx_conf_merge_uint_value(conf->status, prev->status, NGX_HTTP_BLOCK_OFF);
+    ngx_conf_merge_value(conf->enabled, prev->enabled, NGX_HTTP_BLOCK_OFF);
 
     return NGX_CONF_OK;
 }
 
 static ngx_int_t
 ngx_http_api_block_init(ngx_conf_t *cf) {
+		// ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "hi there");
+
     ngx_http_next_header_filter = ngx_http_top_header_filter;
     ngx_http_top_header_filter = ngx_http_api_block_header_filter;
 
