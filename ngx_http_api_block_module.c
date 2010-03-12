@@ -75,6 +75,7 @@ static ngx_int_t
 ngx_http_api_block_body_filter(ngx_http_request_t *r, ngx_chain_t *in) {
 	ngx_chain_t *chain_link;
 	int chain_contains_last_buffer = 0;
+
 	for ( chain_link = in; chain_link != NULL; chain_link = chain_link->next ) {
 		if (chain_link->buf->last_buf)
 			chain_contains_last_buffer = 1;
@@ -93,62 +94,17 @@ ngx_http_api_block_body_filter(ngx_http_request_t *r, ngx_chain_t *in) {
 	b->pos = (u_char *) "<!-- served -->";
 	b->last = b->pos + sizeof("<!-- served -->") - 1;
 
-	ngx_chain_t added_link;
-	added_link.buf = b;
-	added_link.next = NULL;
+	ngx_chain_t *added_link;
+	added_link = ngx_alloc_chain_link(r->pool);
+
+	added_link->buf = b;
+	added_link->next = NULL;
 
 	chain_link->next = added_link;
 	chain_link->buf->last_buf = 0;
 	added_link->buf->last_buf = 1;
 
 	return ngx_http_next_body_filter(r, in);
-
-		char *remote_addr_val, *value, *servername, *result;
-		size_t remote_addr_len, len;
-		uint32_t flags;
-		int i;
-		ngx_http_api_block_conf_t *conf;
-
-		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "block filter");
-
-    conf = ngx_http_get_module_loc_conf(r, ngx_http_api_block_module);
-
-		// Check if the filter has been enabled
-		if (!conf->enabled == NGX_HTTP_BLOCK_ON) {
-			return ngx_http_next_body_filter(r, in);
-		}
-
-		remote_addr_val = (char *)r->connection->addr_text.data;
-		remote_addr_len = sizeof(remote_addr_val) + 1;
-
-		memcached_return mc_error;
-		memcached_return_t rc_m;
-		memcached_server_st *servers;
-		memcached_st *ab_memcache = memcached_create(NULL);
-		servername = "127.0.0.1";
-
-		servers = memcached_server_list_append(NULL, servername, 11211, &rc_m);
-		memcached_server_push(ab_memcache, servers);
-
-		result = memcached_get(ab_memcache, remote_addr_val, remote_addr_len, &len,
-				&flags, &mc_error);
-		if (result) {
-			i = atoi(result) << 1;
-			value = (char *)malloc(sizeof(char) * 16);
-			sprintf(value, "%d", i);
-			rc_m = memcached_set(ab_memcache, remote_addr_val, remote_addr_len, 
-					value, sizeof(value), (time_t)i, (uint32_t)0);
-			return NGX_HTTP_INTERNAL_SERVER_ERROR;
-		}
-		else {
-			rc_m = memcached_set(ab_memcache, remote_addr_val, remote_addr_len, 
-					"1", sizeof("1"), (time_t)1, (uint32_t)0);
-		}
-
-		memcached_server_free(servers);
-		memcached_free(ab_memcache);
-
-		return ngx_http_next_body_filter(r, in);
 }
 
 static void *
